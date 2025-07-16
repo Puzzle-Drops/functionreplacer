@@ -221,7 +221,7 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 // Add this FIRST - it will properly detect classes
                 /class\s+([A-Z][a-zA-Z0-9_]*)\s*(?:extends\s+[a-zA-Z0-9_]+\s*)?\s*{/g,
                 // Class methods and constructors
-                /(?:async\s+)?(?:static\s+)?(\w+)\s*\([^)]*\)\s*{/g,
+                /(?:^|\n)\s*(?:async\s+)?(?:static\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\([^)]*\)\s*{/g,
                 // Regular function declarations
                 /(?:async\s+)?function\s+(\w+)\s*\([^)]*\)\s*{/g,
                 // Arrow functions assigned to variables

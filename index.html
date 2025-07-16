@@ -202,6 +202,7 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
         let functions = [];
         let selectedFunction = null;
         let originalText = '';
+        let detectedClasses = new Set();
         
         document.getElementById('originalCode').addEventListener('input', parseCode);
         
@@ -209,6 +210,7 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
             const code = document.getElementById('originalCode').value;
             originalText = code;
             functions = [];
+            detectedClasses = new Set();
             
             if (!code.trim()) {
                 updateFunctionCount();
@@ -216,14 +218,37 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 return;
             }
             
+            // First, find all class declarations
+            const classPattern = /class\s+(\w+)(?:\s+extends\s+\w+)?\s*{/g;
+            let classMatch;
+            const classPositions = new Map();
+            
+            while ((classMatch = classPattern.exec(code)) !== null) {
+                const className = classMatch[1];
+                if (!isReservedWord(className)) {
+                    detectedClasses.add(className);
+                    // Find the end of this class
+                    const classStart = classMatch.index;
+                    const bracePos = code.indexOf('{', classStart);
+                    const classEnd = findMatchingBrace(code, bracePos);
+                    if (classEnd !== -1) {
+                        classPositions.set(className, { start: classStart, end: classEnd });
+                    }
+                }
+            }
+            
             // Find all functions using multiple patterns
             const patterns = [
-                // Class methods and constructors
-                /(?:async\s+)?(?:static\s+)?(\w+)\s*\([^)]*\)\s*{/g,
+                // Getter methods: get propertyName() {
+                /\bget\s+(\w+)\s*\(\s*\)\s*{/g,
+                // Setter methods: set propertyName(value) {
+                /\bset\s+(\w+)\s*\([^)]+\)\s*{/g,
+                // Class methods (more specific - requires newline or start of line before)
+                /(?:^|\n)\s*(?:async\s+)?(?:static\s+)?([a-zA-Z_]\w*)\s*\([^)]*\)\s*{/gm,
                 // Regular function declarations
-                /(?:async\s+)?function\s+(\w+)\s*\([^)]*\)\s*{/g,
+                /\bfunction\s+(\w+)\s*\([^)]*\)\s*{/g,
                 // Arrow functions assigned to variables
-                /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>\s*{/g,
+                /\b(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>\s*{/g,
                 // Object methods with function keyword
                 /(\w+)\s*:\s*(?:async\s+)?function\s*\([^)]*\)\s*{/g,
                 // Object methods with arrow functions
@@ -232,14 +257,24 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
             
             const allMatches = [];
             
-            patterns.forEach(pattern => {
+            patterns.forEach((pattern, patternIndex) => {
                 pattern.lastIndex = 0;
                 let match;
                 while ((match = pattern.exec(code)) !== null) {
+                    let actualStart = match.index;
+                    
+                    // For getter/setter patterns (first two patterns), adjust start position
+                    if (patternIndex <= 1) {
+                        // The match.index points to 'get' or 'set', which is what we want
+                        actualStart = match.index;
+                    }
+                    
                     allMatches.push({
                         name: match[1],
-                        start: match.index,
-                        fullMatch: match[0]
+                        start: actualStart,
+                        fullMatch: match[0],
+                        isGetter: patternIndex === 0,
+                        isSetter: patternIndex === 1
                     });
                 }
             });
@@ -249,8 +284,13 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 const name = matchInfo.name;
                 const start = matchInfo.start;
                 
-                // Skip keywords
-                if (['if', 'else', 'for', 'while', 'switch', 'try', 'catch', 'do', 'async', 'function'].includes(name)) {
+                // Skip keywords and reserved words
+                if (isReservedWord(name) || name === 'constructor') {
+                    return;
+                }
+                
+                // Skip if it's a class name (classes are not functions)
+                if (detectedClasses.has(name)) {
                     return;
                 }
                 
@@ -270,10 +310,14 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 );
                 
                 if (!isDuplicate) {
-                    // Find class name by looking backwards for the most recent class declaration
-                    const beforeText = code.substring(0, start);
-                    const classMatches = [...beforeText.matchAll(/class\s+(\w+)/g)];
-                    const className = classMatches.length > 0 ? classMatches[classMatches.length - 1][1] : null;
+                    // Find which class this function belongs to
+                    let className = null;
+                    for (const [cls, pos] of classPositions) {
+                        if (start > pos.start && start < pos.end) {
+                            className = cls;
+                            break;
+                        }
+                    }
                     
                     functions.push({
                         name: name,
@@ -285,29 +329,97 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 }
             });
             
-            // Sort by position
-            functions.sort((a, b) => a.start - b.start);
+            // Sort by class first, then alphabetically within each class
+            functions.sort((a, b) => {
+                // First sort by whether they have a class or not
+                if (a.className && !b.className) return -1;
+                if (!a.className && b.className) return 1;
+                
+                // Then sort by class name
+                if (a.className && b.className && a.className !== b.className) {
+                    return a.className.localeCompare(b.className);
+                }
+                
+                // Finally sort by function name within the same class
+                return a.name.localeCompare(b.name);
+            });
             
             // Debug: Check if classes were detected
-            const classNames = [...new Set(functions.filter(f => f.className).map(f => f.className))];
             console.log('Functions found:', functions.length);
-            console.log('Classes detected:', classNames);
+            console.log('Classes detected:', Array.from(detectedClasses));
             
             updateFunctionCount();
             displayFunctions();
+        }
+        
+        function isReservedWord(word) {
+            const reserved = [
+                'if', 'else', 'for', 'while', 'do', 'switch', 'case', 'break', 
+                'continue', 'return', 'try', 'catch', 'finally', 'throw', 'new', 
+                'this', 'super', 'class', 'function', 'const', 'let', 'var',
+                'true', 'false', 'null', 'undefined', 'typeof', 'instanceof',
+                'delete', 'void', 'yield', 'async', 'await', 'import', 'export',
+                'default', 'extends', 'static', 'get', 'set', 'of', 'in'
+            ];
+            
+            // Built-in array/object methods to exclude
+            const builtInMethods = [
+                'forEach', 'map', 'filter', 'reduce', 'find', 'findIndex', 'some', 'every',
+                'push', 'pop', 'shift', 'unshift', 'slice', 'splice', 'indexOf', 'includes',
+                'sort', 'reverse', 'join', 'split', 'toString', 'valueOf', 'hasOwnProperty',
+                'preventDefault', 'stopPropagation', 'addEventListener', 'removeEventListener',
+                'querySelector', 'querySelectorAll', 'getElementById', 'getElementsByClassName',
+                'createElement', 'appendChild', 'removeChild', 'setAttribute', 'getAttribute',
+                'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+                'then', 'catch', 'finally', 'resolve', 'reject',
+                'log', 'error', 'warn', 'info', 'debug', 'trace',
+                'random', 'floor', 'ceil', 'round', 'max', 'min', 'abs', 'sqrt', 'pow',
+                'startsWith', 'endsWith', 'padStart', 'padEnd', 'trim', 'toLowerCase', 'toUpperCase',
+                'keys', 'values', 'entries', 'assign', 'freeze', 'seal'
+            ];
+            
+            return reserved.includes(word.toLowerCase()) || builtInMethods.includes(word);
         }
         
         function findMatchingBrace(code, startPos) {
             let depth = 0;
             let inString = false;
             let stringChar = '';
+            let inComment = false;
+            let inMultiComment = false;
             
             for (let i = startPos; i < code.length; i++) {
                 const char = code[i];
                 const prevChar = i > 0 ? code[i-1] : '';
+                const nextChar = i < code.length - 1 ? code[i+1] : '';
                 
                 // Skip escaped characters
-                if (prevChar === '\\') continue;
+                if (prevChar === '\\' && inString) continue;
+                
+                // Handle comments
+                if (!inString) {
+                    if (char === '/' && nextChar === '/' && !inComment && !inMultiComment) {
+                        inComment = true;
+                        continue;
+                    }
+                    if (char === '/' && nextChar === '*' && !inComment && !inMultiComment) {
+                        inMultiComment = true;
+                        i++; // Skip the *
+                        continue;
+                    }
+                    if (char === '*' && nextChar === '/' && inMultiComment) {
+                        inMultiComment = false;
+                        i++; // Skip the /
+                        continue;
+                    }
+                    if (char === '\n' && inComment) {
+                        inComment = false;
+                        continue;
+                    }
+                }
+                
+                // Skip if in comment
+                if (inComment || inMultiComment) continue;
                 
                 // Handle strings
                 if (!inString) {

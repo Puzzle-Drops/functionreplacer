@@ -218,10 +218,8 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
             
             // Find all functions using multiple patterns
             const patterns = [
-                // Add this FIRST - it will properly detect classes
-                /class\s+([A-Z][a-zA-Z0-9_]*)\s*(?:extends\s+[a-zA-Z0-9_]+\s*)?\s*{/g,
                 // Class methods and constructors
-                /(?:^|\n)\s*(?:async\s+)?(?:static\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\([^)]*\)\s*{/g,
+                /(?:async\s+)?(?:static\s+)?(\w+)\s*\([^)]*\)\s*{/g,
                 // Regular function declarations
                 /(?:async\s+)?function\s+(\w+)\s*\([^)]*\)\s*{/g,
                 // Arrow functions assigned to variables
@@ -251,14 +249,10 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 const name = matchInfo.name;
                 const start = matchInfo.start;
                 
-                // Skip keywords and array methods
-if (['if', 'else', 'for', 'while', 'switch', 'try', 'catch', 'do', 'async', 'function',
-     'forEach', 'map', 'filter', 'reduce', 'find', 'some', 'every', 'includes', 
-     'indexOf', 'push', 'pop', 'shift', 'unshift', 'splice', 'slice', 'sort',
-     'reverse', 'join', 'split', 'trim', 'replace', 'match', 'test', 'exec',
-     'charAt', 'substring', 'substr', 'toLowerCase', 'toUpperCase'].includes(name)) {
-    return;
-}
+                // Skip keywords
+                if (['if', 'else', 'for', 'while', 'switch', 'try', 'catch', 'do', 'async', 'function'].includes(name)) {
+                    return;
+                }
                 
                 // Find opening brace
                 const bracePos = code.indexOf('{', start);

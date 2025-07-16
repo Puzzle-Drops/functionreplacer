@@ -39,6 +39,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 10px;
         }
         
         .function-count {
@@ -171,28 +172,58 @@
             cursor: not-allowed;
         }
         
+        #copyButton.success {
+            background-color: #2ea043;
+        }
+        
         textarea::placeholder {
             color: #484f58;
+        }
+        
+        select {
+            background: #0d1117;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: Consolas, 'Courier New', monospace;
+            cursor: pointer;
+        }
+        
+        select:hover {
+            border-color: #484f58;
+        }
+        
+        select:focus {
+            outline: none;
+            border-color: #58a6ff;
         }
     </style>
 </head>
 <body>
     <div class="panel left-panel">
         <h3>Original Code</h3>
-        <textarea id="originalCode" placeholder="Paste your JavaScript file here...
+        <textarea id="originalCode" placeholder="Paste your JavaScript or JSON file here...
 
-Supports: class methods, regular functions, arrow functions, object methods, async functions, etc."></textarea>
+JavaScript: class methods, regular functions, arrow functions, object methods, async functions, etc.
+JSON: automatically detects and parses JSON structure"></textarea>
+        <button id="copyButton" onclick="copyOriginal()" style="margin-top: 10px;">Copy</button>
     </div>
     
     <div class="panel right-panel">
         <h3>
-            <span>Functions</span>
+            <span id="itemsTitle">Functions</span>
             <span class="function-count" id="functionCount"></span>
+            <select id="sortMode" onchange="changeSortMode()" style="margin-left: auto;">
+                <option value="alpha">Alphabetical</option>
+                <option value="position">Order in file</option>
+            </select>
         </h3>
         <div id="functionList" class="function-list"></div>
         
         <div class="replacement-area">
-            <h3>Replace Function</h3>
+            <h3 id="replaceTitle">Replace Function</h3>
             <textarea id="replacementCode" placeholder="Paste new function code here..."></textarea>
             <button id="replaceButton" onclick="replaceFunction()" disabled>Replace Function</button>
         </div>
@@ -203,14 +234,42 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
         let selectedFunction = null;
         let originalText = '';
         let detectedClasses = new Set();
+        let isJSON = false;
+        let sortMode = 'alpha'; // 'alpha' or 'position'
         
         document.getElementById('originalCode').addEventListener('input', parseCode);
+        
+        function copyOriginal() {
+            const originalCode = document.getElementById('originalCode').value;
+            navigator.clipboard.writeText(originalCode).then(() => {
+                const button = document.getElementById('copyButton');
+                const originalText = button.textContent;
+                button.textContent = 'Copied!';
+                button.classList.add('success');
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.classList.remove('success');
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                alert('Failed to copy to clipboard');
+            });
+        }
+        
+        function changeSortMode() {
+            sortMode = document.getElementById('sortMode').value;
+            if (functions.length > 0) {
+                sortFunctions();
+                displayFunctions();
+            }
+        }
         
         function parseCode() {
             const code = document.getElementById('originalCode').value;
             originalText = code;
             functions = [];
             detectedClasses = new Set();
+            isJSON = false;
             
             if (!code.trim()) {
                 updateFunctionCount();
@@ -218,6 +277,27 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 return;
             }
             
+            // Try to detect if it's JSON
+            const trimmedCode = code.trim();
+            if ((trimmedCode.startsWith('{') && trimmedCode.endsWith('}')) || 
+                (trimmedCode.startsWith('[') && trimmedCode.endsWith(']'))) {
+                try {
+                    JSON.parse(trimmedCode);
+                    isJSON = true;
+                    parseJSON(trimmedCode);
+                    return;
+                } catch (e) {
+                    // Not valid JSON, continue with JavaScript parsing
+                    console.log('Not valid JSON, parsing as JavaScript');
+                }
+            }
+            
+            // JavaScript parsing starts here
+            console.log('Parsing as JavaScript...');
+            parseJavaScript(code);
+        }
+        
+        function parseJavaScript(code) {
             // First, find all class declarations
             const classPattern = /class\s+(\w+)(?:\s+extends\s+\w+)?\s*{/g;
             let classMatch;
@@ -227,7 +307,6 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 const className = classMatch[1];
                 if (!isReservedWord(className)) {
                     detectedClasses.add(className);
-                    // Find the end of this class
                     const classStart = classMatch.index;
                     const bracePos = code.indexOf('{', classStart);
                     const classEnd = findMatchingBrace(code, bracePos);
@@ -239,19 +318,12 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
             
             // Find all functions using multiple patterns
             const patterns = [
-                // Getter methods: get propertyName() {
                 /\bget\s+(\w+)\s*\(\s*\)\s*{/g,
-                // Setter methods: set propertyName(value) {
                 /\bset\s+(\w+)\s*\([^)]+\)\s*{/g,
-                // Class methods (more specific - requires newline or start of line before)
                 /(?:^|\n)\s*(?:async\s+)?(?:static\s+)?([a-zA-Z_]\w*)\s*\([^)]*\)\s*{/gm,
-                // Regular function declarations
                 /\bfunction\s+(\w+)\s*\([^)]*\)\s*{/g,
-                // Arrow functions assigned to variables
                 /\b(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>\s*{/g,
-                // Object methods with function keyword
                 /(\w+)\s*:\s*(?:async\s+)?function\s*\([^)]*\)\s*{/g,
-                // Object methods with arrow functions
                 /(\w+)\s*:\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>\s*{/g
             ];
             
@@ -261,17 +333,9 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 pattern.lastIndex = 0;
                 let match;
                 while ((match = pattern.exec(code)) !== null) {
-                    let actualStart = match.index;
-                    
-                    // For getter/setter patterns (first two patterns), adjust start position
-                    if (patternIndex <= 1) {
-                        // The match.index points to 'get' or 'set', which is what we want
-                        actualStart = match.index;
-                    }
-                    
                     allMatches.push({
                         name: match[1],
-                        start: actualStart,
+                        start: match.index,
                         fullMatch: match[0],
                         isGetter: patternIndex === 0,
                         isSetter: patternIndex === 1
@@ -284,33 +348,27 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 const name = matchInfo.name;
                 const start = matchInfo.start;
                 
-                // Skip keywords and reserved words
                 if (isReservedWord(name) || name === 'constructor') {
                     return;
                 }
                 
-                // Skip if it's a class name (classes are not functions)
                 if (detectedClasses.has(name)) {
                     return;
                 }
                 
-                // Find opening brace
                 const bracePos = code.indexOf('{', start);
                 if (bracePos === -1 || bracePos > start + matchInfo.fullMatch.length) return;
                 
-                // Find closing brace
                 const endPos = findMatchingBrace(code, bracePos);
                 if (endPos === -1) return;
                 
                 const functionText = code.substring(start, endPos + 1);
                 
-                // Check for duplicates
                 const isDuplicate = functions.some(f => 
                     Math.abs(f.start - start) < 5 && f.name === name
                 );
                 
                 if (!isDuplicate) {
-                    // Find which class this function belongs to
                     let className = null;
                     for (const [cls, pos] of classPositions) {
                         if (start > pos.start && start < pos.end) {
@@ -329,27 +387,173 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 }
             });
             
-            // Sort by class first, then alphabetically within each class
-            functions.sort((a, b) => {
-                // First sort by whether they have a class or not
-                if (a.className && !b.className) return -1;
-                if (!a.className && b.className) return 1;
-                
-                // Then sort by class name
-                if (a.className && b.className && a.className !== b.className) {
-                    return a.className.localeCompare(b.className);
-                }
-                
-                // Finally sort by function name within the same class
-                return a.name.localeCompare(b.name);
-            });
+            sortFunctions();
             
-            // Debug: Check if classes were detected
             console.log('Functions found:', functions.length);
             console.log('Classes detected:', Array.from(detectedClasses));
             
             updateFunctionCount();
             displayFunctions();
+        }
+        
+        function sortFunctions() {
+            if (sortMode === 'position') {
+                // Sort by position in file
+                functions.sort((a, b) => a.start - b.start);
+            } else {
+                // Sort alphabetically (with class grouping)
+                functions.sort((a, b) => {
+                    if (a.className && !b.className) return -1;
+                    if (!a.className && b.className) return 1;
+                    if (a.className && b.className && a.className !== b.className) {
+                        return a.className.localeCompare(b.className);
+                    }
+                    return a.name.localeCompare(b.name);
+                });
+            }
+        }
+        
+        function parseJSON(jsonStr) {
+            console.log('Parsing as JSON...');
+            const json = JSON.parse(jsonStr);
+            functions = [];
+            
+            function extractEntries(obj, path = []) {
+                if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+                    Object.keys(obj).forEach(key => {
+                        const currentPath = [...path, key];
+                        const value = obj[key];
+                        
+                        if (typeof value === 'object' && !Array.isArray(value)) {
+                            if (value.name || path.includes('classes') || path.length === 0) {
+                                const startPos = findJSONPosition(jsonStr, currentPath);
+                                const endPos = findJSONEndPosition(jsonStr, startPos);
+                                
+                                if (startPos !== -1 && endPos !== -1) {
+                                    functions.push({
+                                        name: key,
+                                        className: path.length > 0 ? path[0] : 'null',
+                                        text: jsonStr.substring(startPos, endPos + 1),
+                                        start: startPos,
+                                        end: endPos + 1,
+                                        path: currentPath
+                                    });
+                                }
+                            }
+                            extractEntries(value, currentPath);
+                        } else if (Array.isArray(value)) {
+                            value.forEach((item, index) => {
+                                if (typeof item === 'object') {
+                                    extractEntries(item, [...currentPath, index]);
+                                }
+                            });
+                        }
+                    });
+                } else if (Array.isArray(obj)) {
+                    obj.forEach((item, index) => {
+                        if (typeof item === 'object' && item.name) {
+                            const currentPath = [...path, index];
+                            const startPos = findJSONPosition(jsonStr, currentPath);
+                            const endPos = findJSONEndPosition(jsonStr, startPos);
+                            
+                            if (startPos !== -1 && endPos !== -1) {
+                                functions.push({
+                                    name: item.name || `Item ${index}`,
+                                    className: 'null',
+                                    text: jsonStr.substring(startPos, endPos + 1),
+                                    start: startPos,
+                                    end: endPos + 1,
+                                    path: currentPath
+                                });
+                            }
+                        }
+                    });
+                }
+            }
+            
+            extractEntries(json);
+            
+            sortFunctions();
+            
+            updateFunctionCount();
+            displayFunctions();
+        }
+        
+        function findJSONPosition(jsonStr, path) {
+            let searchStr = `"${path[path.length - 1]}"`;
+            let pos = 0;
+            
+            for (let i = 0; i < path.length - 1; i++) {
+                const parentKey = `"${path[i]}"`;
+                pos = jsonStr.indexOf(parentKey, pos);
+                if (pos === -1) return -1;
+                pos += parentKey.length;
+            }
+            
+            pos = jsonStr.indexOf(searchStr, pos);
+            if (pos === -1) return -1;
+            
+            pos = jsonStr.indexOf(':', pos);
+            if (pos === -1) return -1;
+            
+            pos++;
+            while (pos < jsonStr.length && /\s/.test(jsonStr[pos])) pos++;
+            
+            return pos;
+        }
+        
+        function findJSONEndPosition(jsonStr, startPos) {
+            if (startPos === -1) return -1;
+            
+            const char = jsonStr[startPos];
+            if (char === '{') {
+                return findMatchingBrace(jsonStr, startPos);
+            } else if (char === '[') {
+                return findMatchingBracket(jsonStr, startPos);
+            } else if (char === '"') {
+                let pos = startPos + 1;
+                while (pos < jsonStr.length) {
+                    if (jsonStr[pos] === '"' && jsonStr[pos - 1] !== '\\') {
+                        return pos;
+                    }
+                    pos++;
+                }
+            } else {
+                let pos = startPos;
+                while (pos < jsonStr.length && !/[\s,}\]]/.test(jsonStr[pos])) {
+                    pos++;
+                }
+                return pos - 1;
+            }
+            
+            return -1;
+        }
+        
+        function findMatchingBracket(str, startPos) {
+            let depth = 0;
+            let inString = false;
+            
+            for (let i = startPos; i < str.length; i++) {
+                const char = str[i];
+                const prevChar = i > 0 ? str[i-1] : '';
+                
+                if (prevChar === '\\' && inString) continue;
+                
+                if (!inString && char === '"') {
+                    inString = true;
+                } else if (inString && char === '"') {
+                    inString = false;
+                } else if (!inString) {
+                    if (char === '[') {
+                        depth++;
+                    } else if (char === ']') {
+                        depth--;
+                        if (depth === 0) return i;
+                    }
+                }
+            }
+            
+            return -1;
         }
         
         function isReservedWord(word) {
@@ -362,7 +566,6 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 'default', 'extends', 'static', 'get', 'set', 'of', 'in'
             ];
             
-            // Built-in array/object methods to exclude
             const builtInMethods = [
                 'forEach', 'map', 'filter', 'reduce', 'find', 'findIndex', 'some', 'every',
                 'push', 'pop', 'shift', 'unshift', 'slice', 'splice', 'indexOf', 'includes',
@@ -393,10 +596,8 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 const prevChar = i > 0 ? code[i-1] : '';
                 const nextChar = i < code.length - 1 ? code[i+1] : '';
                 
-                // Skip escaped characters
                 if (prevChar === '\\' && inString) continue;
                 
-                // Handle comments
                 if (!inString) {
                     if (char === '/' && nextChar === '/' && !inComment && !inMultiComment) {
                         inComment = true;
@@ -404,12 +605,12 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                     }
                     if (char === '/' && nextChar === '*' && !inComment && !inMultiComment) {
                         inMultiComment = true;
-                        i++; // Skip the *
+                        i++;
                         continue;
                     }
                     if (char === '*' && nextChar === '/' && inMultiComment) {
                         inMultiComment = false;
-                        i++; // Skip the /
+                        i++;
                         continue;
                     }
                     if (char === '\n' && inComment) {
@@ -418,10 +619,8 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                     }
                 }
                 
-                // Skip if in comment
                 if (inComment || inMultiComment) continue;
                 
-                // Handle strings
                 if (!inString) {
                     if (char === '"' || char === "'" || char === '`') {
                         inString = true;
@@ -444,12 +643,29 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
         
         function updateFunctionCount() {
             const countEl = document.getElementById('functionCount');
+            const titleEl = document.getElementById('itemsTitle');
+            const replaceTitleEl = document.getElementById('replaceTitle');
+            const replaceBtn = document.getElementById('replaceButton');
+            const placeholderEl = document.getElementById('replacementCode');
+            
+            if (isJSON) {
+                titleEl.textContent = 'JSON Entries';
+                replaceTitleEl.textContent = 'Replace Entry';
+                replaceBtn.textContent = 'Replace Entry';
+                placeholderEl.placeholder = 'Paste new JSON entry here...';
+            } else {
+                titleEl.textContent = 'Functions';
+                replaceTitleEl.textContent = 'Replace Function';
+                replaceBtn.textContent = 'Replace Function';
+                placeholderEl.placeholder = 'Paste new function code here...';
+            }
+            
             if (functions.length > 0) {
                 countEl.textContent = ' (' + functions.length + ')';
             } else {
                 countEl.textContent = '';
             }
-            console.log('Updated function count:', functions.length);
+            console.log('Updated count:', functions.length);
         }
         
         function displayFunctions() {
@@ -460,36 +676,55 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
                 const div = document.createElement('div');
                 div.className = 'function-item';
                 
-                // Get function signature
-                const braceIndex = func.text.indexOf('{');
-                const signature = func.text.substring(0, braceIndex + 1).trim();
-                const shortSig = signature.length > 80 ? signature.substring(0, 77) + '...' : signature;
-                
-                // Create display elements
-                const classSpan = document.createElement('span');
-                classSpan.className = 'class-name';
-                
-                const sepSpan = document.createElement('span');
-                sepSpan.className = 'separator';
-                sepSpan.textContent = ' | ';
-                
-                const nameSpan = document.createElement('span');
-                nameSpan.className = 'func-name';
-                nameSpan.textContent = func.name;
-                
-                const sigSpan = document.createElement('span');
-                sigSpan.textContent = ' - ' + shortSig;
-                
-                if (func.className) {
+                if (isJSON) {
+                    const classSpan = document.createElement('span');
+                    classSpan.className = 'class-name';
                     classSpan.textContent = func.className;
+                    
+                    const sepSpan = document.createElement('span');
+                    sepSpan.className = 'separator';
+                    sepSpan.textContent = ' | ';
+                    
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'func-name';
+                    nameSpan.textContent = func.name;
+                    
                     div.appendChild(classSpan);
                     div.appendChild(sepSpan);
+                    div.appendChild(nameSpan);
+                    
+                    div.title = func.path.join(' > ');
+                } else {
+                    const braceIndex = func.text.indexOf('{');
+                    const signature = func.text.substring(0, braceIndex + 1).trim();
+                    const shortSig = signature.length > 80 ? signature.substring(0, 77) + '...' : signature;
+                    
+                    const classSpan = document.createElement('span');
+                    classSpan.className = 'class-name';
+                    
+                    const sepSpan = document.createElement('span');
+                    sepSpan.className = 'separator';
+                    sepSpan.textContent = ' | ';
+                    
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'func-name';
+                    nameSpan.textContent = func.name;
+                    
+                    const sigSpan = document.createElement('span');
+                    sigSpan.textContent = ' - ' + shortSig;
+                    
+                    if (func.className) {
+                        classSpan.textContent = func.className;
+                        div.appendChild(classSpan);
+                        div.appendChild(sepSpan);
+                    }
+                    
+                    div.appendChild(nameSpan);
+                    div.appendChild(sigSpan);
+                    
+                    div.title = func.className ? `${func.className} | ${signature}` : signature;
                 }
                 
-                div.appendChild(nameSpan);
-                div.appendChild(sigSpan);
-                
-                div.title = func.className ? `${func.className} | ${signature}` : signature;
                 div.onclick = function() { selectFunction(index); };
                 
                 list.appendChild(div);
@@ -502,7 +737,6 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
         function selectFunction(index) {
             selectedFunction = functions[index];
             
-            // Update UI
             const items = document.querySelectorAll('.function-item');
             items.forEach((item, i) => {
                 if (i === index) {
@@ -513,7 +747,17 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
             });
             
             document.getElementById('replaceButton').disabled = false;
-            document.getElementById('replacementCode').value = selectedFunction.text;
+            
+            if (isJSON) {
+                try {
+                    const parsed = JSON.parse(selectedFunction.text);
+                    document.getElementById('replacementCode').value = JSON.stringify(parsed, null, 2);
+                } catch (e) {
+                    document.getElementById('replacementCode').value = selectedFunction.text;
+                }
+            } else {
+                document.getElementById('replacementCode').value = selectedFunction.text;
+            }
         }
         
         function replaceFunction() {
@@ -522,17 +766,35 @@ Supports: class methods, regular functions, arrow functions, object methods, asy
             const replacementCode = document.getElementById('replacementCode').value;
             const currentCode = document.getElementById('originalCode').value;
             
-            // Replace the function
-            const newCode = currentCode.substring(0, selectedFunction.start) + 
-                           replacementCode + 
-                           currentCode.substring(selectedFunction.end);
+            if (isJSON) {
+                try {
+                    JSON.parse(replacementCode);
+                } catch (e) {
+                    alert('Invalid JSON in replacement field');
+                    return;
+                }
+                
+                let start = selectedFunction.start;
+                let end = selectedFunction.end;
+                
+                if (currentCode[end] === ',') {
+                    end++;
+                }
+                
+                const newCode = currentCode.substring(0, start) + 
+                               replacementCode + 
+                               currentCode.substring(end);
+                
+                document.getElementById('originalCode').value = newCode;
+            } else {
+                const newCode = currentCode.substring(0, selectedFunction.start) + 
+                               replacementCode + 
+                               currentCode.substring(selectedFunction.end);
+                
+                document.getElementById('originalCode').value = newCode;
+            }
             
-            document.getElementById('originalCode').value = newCode;
-            
-            // Re-parse
             parseCode();
-            
-            // Clear replacement area
             document.getElementById('replacementCode').value = '';
         }
     </script>

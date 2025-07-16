@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Function Replacer</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Consolas, 'Courier New', monospace;
+            display: flex;
+            height: 100vh;
+            background-color: #0d1117;
+            color: #c9d1d9;
+        }
+        
+        .panel {
+            width: 50%;
+            padding: 10px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .left-panel {
+            background-color: #0d1117;
+            border-right: 2px solid #30363d;
+        }
+        
+        .right-panel {
+            background-color: #161b22;
+        }
+        
+        h3 {
+            margin: 10px 0;
+            color: #f0f6fc;
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .function-count {
+            color: #7d8590;
+            font-weight: normal;
+            font-size: 12px;
+        }
+        
+        textarea {
+            width: 100%;
+            height: 100%;
+            font-family: Consolas, 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            border: 1px solid #30363d;
+            padding: 10px;
+            box-sizing: border-box;
+            resize: none;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            border-radius: 6px;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: #58a6ff;
+        }
+        
+        .function-list {
+            height: 45%;
+            overflow-y: auto;
+            border: 1px solid #30363d;
+            margin-bottom: 10px;
+            background: #0d1117;
+            border-radius: 6px;
+        }
+        
+        .function-list::-webkit-scrollbar {
+            width: 10px;
+        }
+        
+        .function-list::-webkit-scrollbar-track {
+            background: #161b22;
+        }
+        
+        .function-list::-webkit-scrollbar-thumb {
+            background: #30363d;
+            border-radius: 5px;
+        }
+        
+        .function-list::-webkit-scrollbar-thumb:hover {
+            background: #484f58;
+        }
+        
+        .function-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #21262d;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-size: 13px;
+            transition: background-color 0.1s ease;
+            min-width: 0;
+        }
+        
+        .function-item:hover {
+            background-color: #161b22;
+        }
+        
+        .function-item.selected {
+            background-color: #1f6feb;
+            color: white;
+        }
+        
+        .function-item .class-name {
+            color: #58a6ff;
+            font-weight: 600;
+        }
+        
+        .function-item .separator {
+            color: #484f58;
+            margin: 0 5px;
+        }
+        
+        .function-item .func-name {
+            font-weight: 600;
+            color: #f0f6fc;
+        }
+        
+        .function-item.selected .class-name {
+            color: #a5d6ff;
+        }
+        
+        .function-item.selected .separator {
+            color: #8b949e;
+        }
+        
+        .function-item.selected .func-name {
+            color: #fff;
+        }
+        
+        .replacement-area {
+            height: 55%;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        button {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #238636;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-family: Consolas, 'Courier New', monospace;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: background-color 0.1s ease;
+        }
+        
+        button:hover {
+            background-color: #2ea043;
+        }
+        
+        button:disabled {
+            background-color: #21262d;
+            color: #484f58;
+            cursor: not-allowed;
+        }
+        
+        textarea::placeholder {
+            color: #484f58;
+        }
+    </style>
+</head>
+<body>
+    <div class="panel left-panel">
+        <h3>Original Code</h3>
+        <textarea id="originalCode" placeholder="Paste your JavaScript file here...
+
+Supports: class methods, regular functions, arrow functions, object methods, async functions, etc."></textarea>
+    </div>
+    
+    <div class="panel right-panel">
+        <h3>
+            <span>Functions</span>
+            <span class="function-count" id="functionCount"></span>
+        </h3>
+        <div id="functionList" class="function-list"></div>
+        
+        <div class="replacement-area">
+            <h3>Replace Function</h3>
+            <textarea id="replacementCode" placeholder="Paste new function code here..."></textarea>
+            <button id="replaceButton" onclick="replaceFunction()" disabled>Replace Function</button>
+        </div>
+    </div>
+    
+    <script>
+        let functions = [];
+        let selectedFunction = null;
+        let originalText = '';
+        
+        document.getElementById('originalCode').addEventListener('input', parseCode);
+        
+        function parseCode() {
+            const code = document.getElementById('originalCode').value;
+            originalText = code;
+            functions = [];
+            
+            if (!code.trim()) {
+                updateFunctionCount();
+                displayFunctions();
+                return;
+            }
+            
+            // Find all functions using multiple patterns
+            const patterns = [
+                // Class methods and constructors
+                /(?:async\s+)?(?:static\s+)?(\w+)\s*\([^)]*\)\s*{/g,
+                // Regular function declarations
+                /(?:async\s+)?function\s+(\w+)\s*\([^)]*\)\s*{/g,
+                // Arrow functions assigned to variables
+                /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>\s*{/g,
+                // Object methods with function keyword
+                /(\w+)\s*:\s*(?:async\s+)?function\s*\([^)]*\)\s*{/g,
+                // Object methods with arrow functions
+                /(\w+)\s*:\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>\s*{/g
+            ];
+            
+            const allMatches = [];
+            
+            patterns.forEach(pattern => {
+                pattern.lastIndex = 0;
+                let match;
+                while ((match = pattern.exec(code)) !== null) {
+                    allMatches.push({
+                        name: match[1],
+                        start: match.index,
+                        fullMatch: match[0]
+                    });
+                }
+            });
+            
+            // Process matches
+            allMatches.forEach(matchInfo => {
+                const name = matchInfo.name;
+                const start = matchInfo.start;
+                
+                // Skip keywords
+                if (['if', 'else', 'for', 'while', 'switch', 'try', 'catch', 'do', 'async', 'function'].includes(name)) {
+                    return;
+                }
+                
+                // Find opening brace
+                const bracePos = code.indexOf('{', start);
+                if (bracePos === -1 || bracePos > start + matchInfo.fullMatch.length) return;
+                
+                // Find closing brace
+                const endPos = findMatchingBrace(code, bracePos);
+                if (endPos === -1) return;
+                
+                const functionText = code.substring(start, endPos + 1);
+                
+                // Check for duplicates
+                const isDuplicate = functions.some(f => 
+                    Math.abs(f.start - start) < 5 && f.name === name
+                );
+                
+                if (!isDuplicate) {
+                    // Find class name by looking backwards for the most recent class declaration
+                    const beforeText = code.substring(0, start);
+                    const classMatches = [...beforeText.matchAll(/class\s+(\w+)/g)];
+                    const className = classMatches.length > 0 ? classMatches[classMatches.length - 1][1] : null;
+                    
+                    functions.push({
+                        name: name,
+                        className: className,
+                        text: functionText,
+                        start: start,
+                        end: endPos + 1
+                    });
+                }
+            });
+            
+            // Sort by position
+            functions.sort((a, b) => a.start - b.start);
+            
+            // Debug: Check if classes were detected
+            const classNames = [...new Set(functions.filter(f => f.className).map(f => f.className))];
+            console.log('Functions found:', functions.length);
+            console.log('Classes detected:', classNames);
+            
+            updateFunctionCount();
+            displayFunctions();
+        }
+        
+        function findMatchingBrace(code, startPos) {
+            let depth = 0;
+            let inString = false;
+            let stringChar = '';
+            
+            for (let i = startPos; i < code.length; i++) {
+                const char = code[i];
+                const prevChar = i > 0 ? code[i-1] : '';
+                
+                // Skip escaped characters
+                if (prevChar === '\\') continue;
+                
+                // Handle strings
+                if (!inString) {
+                    if (char === '"' || char === "'" || char === '`') {
+                        inString = true;
+                        stringChar = char;
+                    } else if (char === '{') {
+                        depth++;
+                    } else if (char === '}') {
+                        depth--;
+                        if (depth === 0) return i;
+                    }
+                } else {
+                    if (char === stringChar) {
+                        inString = false;
+                    }
+                }
+            }
+            
+            return -1;
+        }
+        
+        function updateFunctionCount() {
+            const countEl = document.getElementById('functionCount');
+            if (functions.length > 0) {
+                countEl.textContent = ' (' + functions.length + ')';
+            } else {
+                countEl.textContent = '';
+            }
+            console.log('Updated function count:', functions.length);
+        }
+        
+        function displayFunctions() {
+            const list = document.getElementById('functionList');
+            list.innerHTML = '';
+            
+            functions.forEach((func, index) => {
+                const div = document.createElement('div');
+                div.className = 'function-item';
+                
+                // Get function signature
+                const braceIndex = func.text.indexOf('{');
+                const signature = func.text.substring(0, braceIndex + 1).trim();
+                const shortSig = signature.length > 80 ? signature.substring(0, 77) + '...' : signature;
+                
+                // Create display elements
+                const classSpan = document.createElement('span');
+                classSpan.className = 'class-name';
+                
+                const sepSpan = document.createElement('span');
+                sepSpan.className = 'separator';
+                sepSpan.textContent = ' | ';
+                
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'func-name';
+                nameSpan.textContent = func.name;
+                
+                const sigSpan = document.createElement('span');
+                sigSpan.textContent = ' - ' + shortSig;
+                
+                if (func.className) {
+                    classSpan.textContent = func.className;
+                    div.appendChild(classSpan);
+                    div.appendChild(sepSpan);
+                }
+                
+                div.appendChild(nameSpan);
+                div.appendChild(sigSpan);
+                
+                div.title = func.className ? `${func.className} | ${signature}` : signature;
+                div.onclick = function() { selectFunction(index); };
+                
+                list.appendChild(div);
+            });
+            
+            document.getElementById('replaceButton').disabled = true;
+            selectedFunction = null;
+        }
+        
+        function selectFunction(index) {
+            selectedFunction = functions[index];
+            
+            // Update UI
+            const items = document.querySelectorAll('.function-item');
+            items.forEach((item, i) => {
+                if (i === index) {
+                    item.classList.add('selected');
+                } else {
+                    item.classList.remove('selected');
+                }
+            });
+            
+            document.getElementById('replaceButton').disabled = false;
+            document.getElementById('replacementCode').value = selectedFunction.text;
+        }
+        
+        function replaceFunction() {
+            if (!selectedFunction) return;
+            
+            const replacementCode = document.getElementById('replacementCode').value;
+            const currentCode = document.getElementById('originalCode').value;
+            
+            // Replace the function
+            const newCode = currentCode.substring(0, selectedFunction.start) + 
+                           replacementCode + 
+                           currentCode.substring(selectedFunction.end);
+            
+            document.getElementById('originalCode').value = newCode;
+            
+            // Re-parse
+            parseCode();
+            
+            // Clear replacement area
+            document.getElementById('replacementCode').value = '';
+        }
+    </script>
+</body>
+</html>
